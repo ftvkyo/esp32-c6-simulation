@@ -3,15 +3,15 @@
 
 use esp_backtrace as _;
 use esp_hal::{
-    clock::ClockControl,
-    delay::Delay,
-    gpio::{Io, Level, Output},
-    peripherals::Peripherals,
-    prelude::*,
-    system::SystemControl,
+    clock::ClockControl, gpio::Io, i2c::I2C, peripherals::Peripherals, prelude::*, system::SystemControl
 };
 
+use ssd1306::{prelude::DisplayRotation, size::DisplaySize128x64, I2CDisplayInterface, Ssd1306, mode::DisplayConfig};
+
+use embedded_graphics::{image::{Image, ImageRaw}, pixelcolor::BinaryColor, prelude::*};
+
 use log::{info, LevelFilter};
+
 
 #[entry]
 fn main() -> ! {
@@ -21,20 +21,46 @@ fn main() -> ! {
 
     esp_println::logger::init_logger(LevelFilter::Info);
 
-    let delay = Delay::new(&clocks);
     let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
+    let i2c = I2C::new(
+        peripherals.I2C0,
+        io.pins.gpio1,
+        io.pins.gpio2,
+        400.kHz(),
+        &clocks,
+    );
 
-    info!("Initialised");
+    info!("Initialised: controller");
 
-    let mut counter: u8 = 0;
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x64, DisplayRotation::Rotate0).into_buffered_graphics_mode();
+    display.init().unwrap();
 
-    let mut led = Output::new(io.pins.gpio7, Level::Low);
-    led.set_high();
+    info!("Initialised: display");
 
-    loop {
-        led.toggle();
-        info!("LED toggled; Counter: {}", counter);
-        counter += 1;
-        delay.delay_millis(500u32);
+    const W: usize = 128;
+    const H: usize = 64;
+
+    let mut img_data = [0u8; W * H];
+
+    for row in 0..H {
+        for col in 0..W {
+            let i_byte = (row + col * H) / 8;
+            let i_bit = (row + col * H) % 8;
+
+            if row == col {
+                img_data[i_byte] |= 0b1 << (7 - i_bit);
+            }
+        }
     }
+
+    let img_raw: ImageRaw<BinaryColor> = ImageRaw::new(&img_data, 64);
+    let img = Image::new(&img_raw, Point::default());
+
+    img.draw(&mut display).unwrap();
+    display.flush().unwrap();
+
+    info!("Image drawn");
+
+    loop {}
 }
