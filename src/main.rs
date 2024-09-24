@@ -41,7 +41,7 @@ fn main() -> ! {
     const W: usize = 128;
     const H: usize = 64;
 
-    let mut img_data = [0u8; W * H];
+    let mut img_data = [0u8; W * H / 8];
 
     for row in 0..H {
         for col in 0..W {
