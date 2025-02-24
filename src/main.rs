@@ -5,12 +5,13 @@ use core::f32::consts::PI;
 
 use esp_backtrace as _;
 use esp_hal::{
-    clock::ClockControl, delay::Delay, gpio::Io, i2c::I2C, peripherals::Peripherals, prelude::*, system::SystemControl
+    clock::CpuClock, delay::Delay, i2c::master::{Config, I2c}, time::RateExtU32,
 };
 
 use ssd1306::{prelude::DisplayRotation, size::DisplaySize128x64, I2CDisplayInterface, Ssd1306, mode::DisplayConfig};
 
 use embedded_graphics::{image::{Image, ImageRaw}, pixelcolor::BinaryColor, prelude::*};
+
 
 use micromath::F32Ext;
 
@@ -71,23 +72,21 @@ impl Img {
 }
 
 
-#[entry]
+#[esp_hal::main]
 fn main() -> ! {
-    let peripherals = Peripherals::take();
-    let system = SystemControl::new(peripherals.SYSTEM);
-    let clocks = ClockControl::max(system.clock_control).freeze();
-    let delay = Delay::new(&clocks);
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
+
+    let delay = Delay::new();
 
     esp_println::logger::init_logger(LevelFilter::Info);
 
-    let io = Io::new(peripherals.GPIO, peripherals.IO_MUX);
-    let i2c = I2C::new(
+    let i2c = I2c::new(
         peripherals.I2C0,
-        io.pins.gpio1,
-        io.pins.gpio2,
-        400.kHz(),
-        &clocks,
-    );
+        Config::default().with_frequency(400.kHz()),
+    ).unwrap()
+        .with_sda(peripherals.GPIO1)
+        .with_scl(peripherals.GPIO2);
 
     info!("Initialised: controller");
 
