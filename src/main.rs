@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-use core::f32::consts::PI;
-
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock, delay::Delay, i2c::master::{Config, I2c}, time::RateExtU32,
@@ -12,25 +10,20 @@ use ssd1306::{prelude::DisplayRotation, size::DisplaySize128x64, I2CDisplayInter
 
 use embedded_graphics::{image::{Image, ImageRaw}, pixelcolor::BinaryColor, prelude::*};
 
-
-use micromath::F32Ext;
-
 use log::{info, LevelFilter};
 
 
 pub const W: usize = 128;
 pub const H: usize = 64;
 pub const FPS: u32 = 60;
+pub const POINTS: usize = 10;
+pub const CX: f32 = (W / 2) as f32;
+pub const CY: f32 = (H / 2) as f32;
+
 
 pub struct Img([u8; W * H / 8]);
 
 impl Img {
-    const POINTS: usize = 3;
-    const SPEED: f32 = 0.01;
-
-    // Phase shift between points
-    const ANGLE: f32 = PI * 2.0 / Self::POINTS as f32;
-
     pub fn new() -> Self {
         Self([0; W * H / 8])
     }
@@ -41,33 +34,130 @@ impl Img {
         }
     }
 
-    pub fn render_frame(&mut self, ms: u32) {
-        let w = W as f32;
-        let wc = w / 2.0;
-        let h = H as f32;
-        let hc = h / 2.0;
+    pub fn set(&mut self, x: isize, y: isize, value: bool) {
+        if x < 0 || x >= W as isize {
+            return;
+        }
 
-        let fx = 1.0;
-        let fy = 2.0;
+        if y < 0 || y >= H as isize {
+            return;
+        }
 
-        self.zero();
+        let x = x as usize;
+        let y = y as usize;
 
-        for point in 0..Self::POINTS {
-            let shift_base = Self::ANGLE * point as f32;
-            let shift = shift_base + ms as f32 * Self::SPEED;
+        let i_byte = (x + y * W) / 8;
+        let i_bit = (x + y * W) % 8;
 
-            let px = (wc + (shift * fx).cos() * w / 3.0) as usize;
-            let py = (hc + (shift * fy).sin() * h / 3.0) as usize;
+        let mask = 0b1 << (7 - i_bit);
 
-            let i_byte = (px + py * W) / 8;
-            let i_bit = (px + py * W) % 8;
-
-            self.0[i_byte] |= 0b1 << (7 - i_bit);
+        if value {
+            self.0[i_byte] |= mask;
+        } else {
+            self.0[i_byte] &= !mask;
         }
     }
 
-    pub fn get(&self) -> &[u8; W * H / 8] {
+    pub fn data(&self) -> &[u8; W * H / 8] {
         &self.0
+    }
+}
+
+
+#[derive(Clone)]
+pub struct Point {
+    pub position: [f32; 2],
+    pub velocity: [f32; 2],
+}
+
+impl Point {
+    pub fn new(x: f32, y: f32) -> Self {
+        Self {
+            position: [x, y],
+            velocity: [0.0, 0.0],
+        }
+    }
+
+    pub fn pos(&self) -> [isize; 2] {
+        [
+            self.position[0] as isize,
+            self.position[1] as isize,
+        ]
+    }
+}
+
+
+#[derive(Clone)]
+pub struct Points([Point; POINTS]);
+
+impl Points {
+    pub fn new() -> Self {
+        let points = [
+            Point::new(CX, CY - 20.0),
+            Point::new(CX, CY - 10.0),
+            Point::new(CX, CY),
+            Point::new(CX, CY + 10.0),
+            Point::new(CX, CY + 20.0),
+            Point::new(CX + 30.0, CY + 5.0),
+            Point::new(CX - 30.0, CY - 5.0),
+            Point::new(CX + 20.0, CY),
+            Point::new(CX - 20.0, CY),
+            Point::new(CX + 50.0, CY - 15.0),
+        ];
+
+        Self(points)
+    }
+
+    pub fn step(&mut self, delta_ms: u32) {
+        const G: f32 = 0.01;
+        const F: f32 = 100.0;
+
+        let mut points_after = self.0.clone();
+
+        let mut center_of_mass = [0.0, 0.0];
+
+        for p in &points_after {
+            center_of_mass[0] += p.position[0] - CX;
+            center_of_mass[1] += p.position[1] - CY;
+        }
+
+        for (pi, p) in points_after.iter_mut().enumerate() {
+            p.position[0] -= center_of_mass[0] * delta_ms as f32 / 1000.0;
+            p.position[1] -= center_of_mass[1] * delta_ms as f32 / 1000.0;
+
+            for (oi, o) in self.0.iter().enumerate() {
+                if pi == oi {
+                    continue;
+                }
+
+                let dx = o.position[0] - p.position[0];
+                let dy = o.position[1] - p.position[1];
+                let m2 = (dx * dx + dy * dy) * F;
+
+                p.velocity[0] += G * dx / m2 * delta_ms as f32;
+                p.velocity[1] += G * dy / m2 * delta_ms as f32;
+            }
+
+            p.position[0] += p.velocity[0] * delta_ms as f32;
+            p.position[1] += p.velocity[1] * delta_ms as f32;
+        }
+
+        self.0 = points_after;
+    }
+
+    pub fn render(&self, img: &mut Img) {
+        img.zero();
+
+        for p in &self.0 {
+            let [px, py] = p.pos();
+
+
+            img.set(px - 1, py, true);
+            img.set(px, py - 1, true);
+            img.set(px, py, true);
+            img.set(px + 1, py, true);
+            img.set(px, py + 1, true);
+        }
     }
 }
 
@@ -96,18 +186,18 @@ fn main() -> ! {
 
     info!("Initialised: display");
 
-    let mut img_data = Img::new();
-    let mut ms = 0;
+    let mut points = Points::new();
+    let mut img = Img::new();
 
     loop {
-        img_data.render_frame(ms);
+        points.render(&mut img);
 
-        let img_raw: ImageRaw<BinaryColor> = ImageRaw::new(img_data.get(), W as u32);
-        let img = Image::new(&img_raw, Point::default());
+        let img_raw: ImageRaw<BinaryColor> = ImageRaw::new(img.data(), W as u32);
+        let img = Image::new(&img_raw, Default::default());
         img.draw(&mut display).unwrap();
         display.flush().unwrap();
 
         delay.delay_millis(1_000 / FPS);
-        ms += 1_000 / FPS;
+        points.step(1_000 / FPS);
     }
 }
