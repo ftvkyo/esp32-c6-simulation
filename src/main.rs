@@ -109,7 +109,7 @@ impl Points {
     }
 
     pub fn step(&mut self, delta_ms: u32) {
-        const G: f32 = 0.01;
+        const G: f32 = 0.03;
         const F: f32 = 100.0;
 
         let mut points_after = self.0.clone();
@@ -140,6 +140,20 @@ impl Points {
 
             p.position[0] += p.velocity[0] * delta_ms as f32;
             p.position[1] += p.velocity[1] * delta_ms as f32;
+        }
+
+        for p in &mut points_after {
+            if (p.position[0] as isize) <= 0 || (p.position[0] as usize) >= W - 1 {
+                p.velocity[0] = -p.velocity[0];
+
+                p.position[0] += p.velocity[0];
+            }
+
+            if (p.position[1] as isize) <= 0 || (p.position[1] as usize) >= H - 1 {
+                p.velocity[1] = -p.velocity[1];
+
+                p.position[1] += p.velocity[1];
+            }
         }
 
         self.0 = points_after;
